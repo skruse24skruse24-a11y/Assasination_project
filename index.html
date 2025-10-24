@@ -1,0 +1,906 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta content="width=device-width, initial-scale=1" name="viewport">
+    <title>Assassination history</title>
+
+    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+    <script type="text/javascript">
+        var options;
+        var dataTable;
+        var chart;
+        var prevButton, nextButton;
+        var navButtons = [];
+        var currentIndex = 0;
+        var zoomed = false;
+
+        var ranges = [
+            { min: 1895, max: 2025 },           // Modern Era (1900, 1950, 2000, 2050 gridlines with 5-year buffer)
+            { min: -2005, max: -1945 },         // Ancient Egypt (-2000, -1950 gridlines, contains -1962 Amenemhat I)
+            { min: 145, max: 305 },             // Roman Empire (150, 200, 250, 300 gridlines, contains 193, 222, 238, 275, 293)
+            { min: 845, max: 955 },             // Early Medieval (850, 900, 950 gridlines, contains 882 Pope John VIII)
+            { min: 995, max: 1205 },            // Medieval Period (1000, 1050, 1100, 1150, 1200 gridlines, contains 1044, 1156, 1160, 1167)
+            { min: 1545, max: 1655 },           // Early Modern (1550, 1600, 1650 gridlines, contains 1577, 1605)
+            { min: 1500, max: 1650 },           // Original Early Modern range
+            { min: 1800, max: 1925 },           // Original Industrial Age
+            { min: 1850, max: 1950 },           // Original World Wars Era
+            { min: 1850, max: 2000 },           // Original 20th Century
+            { min: 1925, max: 2025 }            // Original Contemporary
+        ];
+
+        var rangeTitles = [
+            "Modern Era: 1900-2050 CE",
+            "Ancient Egypt: 2005-1945 BCE",
+            "Roman Empire: 145-305 CE",
+            "Early Medieval: 845-955 CE",
+            "Medieval Period: 995-1205 CE",
+            "Early Modern: 1545-1655 CE",
+            "Early Modern: 1500-1650 CE",
+            "Industrial Age: 1800-1925 CE",
+            "World Wars Era: 1850-1950 CE",
+            "20th Century: 1850-2000 CE",
+            "Contemporary: 1925-2025 CE"
+        ];
+
+        google.charts.load("current", { 'packages': ['corechart', 'bar', 'gantt'] });
+        google.charts.setOnLoadCallback(init);
+
+        function setButtonsEnabled(enabled) {
+            if (prevButton) prevButton.disabled = !enabled;
+            if (nextButton) nextButton.disabled = !enabled;
+            navButtons.forEach(function (b) { b.disabled = !enabled; });
+        }
+
+        function drawChartWithView() {
+            adjustVAxisToData();
+            options.hAxis.ticks = generateFormattedTicks();
+            var view = new google.visualization.DataView(dataTable);
+            view.setColumns([0, 1, 2, 3]);
+            chart.draw(view, options);
+        }
+
+        function init() {
+            options = {
+                chartArea: { top: 0, width: '100%', height: '95%', bottom: 30 },
+                tooltip: {
+                    isHtml: true,
+                    ignoreBounds: true,
+                    trigger: 'selection'
+                },
+                focusTarget: 'datum',
+                dataOpacity: 1.0,
+                legend: { position: "none" },
+                animation: { duration: 1000, easing: 'in' },
+                axisTitlesPosition: 'out',
+                bar: { groupWidth: '100%' },
+                annotations: {
+                    textStyle: {
+                        fontName: 'Arial',
+                        fontSize: 12,
+                        bold: true,
+                        italic: false,
+                        color: 'black'
+                    },
+                    alwaysOutside: true,
+                    stem: {
+                        color: 'transparent',
+                        length: 12
+                    }
+                },
+                hAxis: {
+                    viewWindow: { min: ranges[0].min, max: ranges[0].max },
+                    textPosition: 'out',
+                    gridlines: {
+                        count: -1,
+                        multiple: 50
+                    },
+                    minorGridlines: {
+                        count: 0
+                    }
+                },
+                vAxis: {
+                    gridlines: {
+                        count: 5,
+                        interval: 1,
+                        minspacing: 10
+                    },
+                    textPosition: 'in',
+                },
+            };
+
+            prevButton = document.getElementById('prevBtn');
+            nextButton = document.getElementById('nextBtn');
+            navButtons = Array.prototype.slice.call(document.querySelectorAll('.optBtn'));
+
+            var buttonAnimations = [
+                { duration: 6000, easing: 'inAndOut' },
+                { duration: 6000, easing: 'inAndOut' },
+                { duration: 1000, easing: 'inAndOut' },
+                { duration: 1000, easing: 'inAndOut' },
+                { duration: 1000, easing: 'inAndOut' },
+                { duration: 1000, easing: 'inAndOut' },
+                { duration: 1000, easing: 'inAndOut' },
+                { duration: 1000, easing: 'inAndOut' },
+                { duration: 1000, easing: 'inAndOut' },
+                { duration: 1000, easing: 'inAndOut' }
+            ];
+
+            setRangeIndex(currentIndex);
+
+            navButtons.forEach(function (b, i) {
+                b.addEventListener('click', function () {
+                    options.animation = buttonAnimations[i] || defaultAnimation;
+                    setRangeIndex(i);
+                    redraw();
+                });
+            });
+
+            prevButton.addEventListener('click', function () {
+                currentIndex = (currentIndex - 1 + ranges.length) % ranges.length;
+                options.animation = buttonAnimations[currentIndex] || defaultAnimation;
+                setRangeIndex(currentIndex);
+                redraw();
+            });
+
+            nextButton.addEventListener('click', function () {
+                currentIndex = (currentIndex + 1) % ranges.length;
+                options.animation = buttonAnimations[currentIndex] || defaultAnimation;
+                setRangeIndex(currentIndex);
+                redraw();
+            });
+
+            drawChart();
+        }
+
+        function drawChart() {
+            dataTable = new google.visualization.DataTable();
+
+            dataTable.addColumn('number', 'Year');
+            dataTable.addColumn('number', 'Value');
+            dataTable.addColumn({ type: 'string', role: 'tooltip', p: { html: true } });
+            dataTable.addColumn({ type: 'string', role: 'annotation' });
+
+            // Format: [year, value, detailsHTML (optional), annotation (optional)]
+            var rawData = [
+                // Entries with detailed tooltips (moved to top for easy access)
+                [-1962, 1, '<div class="radial2" id="Ahen"><img src="img/Amenemhat.jpg"><strong>Pharaoh Amenemhat I</strong> - Founder and first pharaoh of the Twelfth Dynasty of Egypt (Middle Kingdom), who ruled from approximately 1991-1962 BCE. Amenemhat I rose to power and established a new dynasty, moving the capital to Itjtawy. He strengthened Egypt\'s borders and centralized power. The circumstances of his death around 1962 BCE are shrouded in mystery. The "Instructions of Amenemhat," a literary work allegedly written by the pharaoh himself, describes his assassination in his bedchamber by members of his own bodyguard during a palace coup. The identity of the assassins and their motives remain unknown. His son Senusret I, who had been co-regent, immediately assumed full power and secured the succession. This assassination is commonly cited as the first recorded political assassination in history, though the historical accuracy is debated by scholars. The Instructions served as a cautionary tale about trust and palace intrigue for future Egyptian rulers.</div>', 'Amenemhat I'],
+                [193, 2, '<div class="radial2"><strong>Emperor Pertinax</strong> - Roman Emperor who reigned for only 87 days (January 1 - March 28, 193 CE) during the tumultuous Year of the Five Emperors. Pertinax, a respected senator and military commander, succeeded the tyrannical Emperor Commodus. He attempted to restore discipline and financial stability to Rome, but his reforms alienated the Praetorian Guard by reducing their privileges and attempting to impose military discipline. On March 28, 193 CE, a group of about 300 Praetorian Guards stormed the imperial palace. Pertinax initially tried to reason with them, giving a speech about duty and honor. When this failed, he was killed by the guardsmen, reportedly struck down by a soldier named Tausius. His head was paraded through Rome on a lance. After his murder, the Praetorian Guard infamously auctioned the imperial throne to the highest bidder, selling it to Didius Julianus, who would himself be killed three months later.</div>', 'Pertinax'],
+                [222, 1, '<div class="radial2"><strong>Emperor Elagabalus</strong> - Roman Emperor from 218-222 CE who became emperor at age 14. Born Varius Avitus Bassianus, he took the name Elagabalus after the Syro-Roman sun god he served as high priest. His reign was marked by religious controversy as he attempted to replace Jupiter with Elagabalus as Rome\'s chief deity, and by scandalous behavior that offended Roman sensibilities. His grandmother Julia Maesa and mother Julia Soaemias had engineered his rise to power, but by 222 CE, Julia Maesa decided he had become a liability. She orchestrated a conspiracy to replace him with his cousin Alexander Severus. On March 11, 222 CE, the Praetorian Guard, acting on orders from Julia Maesa and her daughter Julia Mamaea (Alexander\'s mother), assassinated the 18-year-old emperor in the Praetorian camp. His mother was killed trying to protect him. Both bodies were stripped, dragged through Rome\'s streets, and thrown into the Tiber River. Alexander Severus was immediately proclaimed emperor.</div>', 'Elagabalus'],
+                [238, 3, '<div class="radial2"><strong>Emperor Balbinus</strong> - Roman Emperor who ruled jointly with Pupienus for only 99 days in 238 CE during the chaotic Year of the Six Emperors. This year saw six men claim the imperial throne amid civil war and political crisis. Balbinus, a wealthy aristocrat, and Pupienus, a military commander, were appointed co-emperors by the Senate after the deaths of Gordian I and II. The Senate also made young Gordian III their Caesar (junior emperor). However, Balbinus and Pupienus distrusted each other and failed to work together effectively. The Praetorian Guard, angry at being excluded from the selection process and receiving no donative (bonus payment), resented both emperors. On July 29, 238 CE, Praetorian soldiers stormed the imperial palace, found the co-emperors separately, and dragged them through the streets. Both Balbinus and Pupienus were brutally murdered, reportedly stripped, tortured, and killed. The Guard then proclaimed the teenage Gordian III as sole emperor.</div>', 'Balbinus'],
+                [275, 1, '<div class="radial2"><strong>Emperor Aurelian</strong> - Roman Emperor from 270-275 CE, known as "Restitutor Orbis" (Restorer of the World) for reunifying the fractured Roman Empire during the Crisis of the Third Century. A brilliant military commander of humble origins, Aurelian defeated the Palmyrene Empire in the East and the Gallic Empire in the West, restoring imperial unity. He also constructed the Aurelian Walls around Rome. In September or October 275 CE, while marching to campaign in Persia, Aurelian was assassinated near Caenophrurium (modern Çorlu, Turkey) on the road between Byzantium and Heraclea. The assassination resulted from a conspiracy among his secretaries and officers. According to accounts, his secretary Eros, fearing punishment for a mistake, forged a list claiming Aurelian planned to execute several officers. These officers, believing their lives in danger, murdered the emperor. When the forgery was discovered, the conspirators were killed by loyal soldiers. Aurelian\'s death was deeply mourned, and the army refused to name his successor for months.</div>', 'Aurelian'],
+                [293, 1, '<div class="radial2"><strong>Carausius</strong> - Roman military commander who declared himself Emperor of Britain and northern Gaul, ruling as a breakaway emperor from 286-293 CE. Carausius was appointed by Emperor Maximian to command the British fleet against Saxon and Frankish pirates. Accused of keeping pirate booty for himself and facing execution, Carausius rebelled and declared himself emperor in Britain. He proved highly capable, controlling the English Channel with his powerful fleet and successfully defending Britain against multiple Roman invasion attempts. He minted coins proclaiming himself legitimate emperor and ruled competently for seven years. In 293 CE, his finance minister and trusted subordinate Allectus, seeing that Carausius was losing control of his Gallic territories to Roman forces, assassinated him in a coup d\'état to seize power himself. Allectus took the imperial title but would himself be defeated and killed by Roman forces under Constantius Chlorus three years later, ending the Britannic Empire.</div>', 'Carausius'],
+                [882, 1, '<div class="radial2"><strong>Pope John VIII</strong> - Pope from 872-882 CE during a turbulent period in medieval Europe. John VIII faced numerous challenges including Muslim Saracen raids on Italy, political intrigue, and conflicts with the Eastern Church. He was an active and energetic pope who personally led negotiations with various powers and even organized naval forces against Saracen invasions. On December 16, 882 CE, Pope John VIII was assassinated in Rome in what is believed to be the first murder of a reigning pope. According to medieval sources, he was poisoned by members of his own entourage who grew impatient when the poison worked too slowly, so they finished him off by clubbing him to death with a hammer. The assassins were reportedly relatives seeking to benefit from his death. The exact details remain murky due to the chaotic nature of the era, but John VIII is recognized as the first pope to be assassinated. His death came after he had excommunicated several powerful nobles, creating many enemies.</div>', 'Pope John VIII'],
+                [1044, 2, '<div class="radial2"><strong>King Samuel Aba of Hungary</strong> - King of Hungary from 1041-1044 CE. Samuel Aba was brother-in-law to King Stephen I (later Saint Stephen), and married Stephen\'s sister. He initially served as ruler for the young King Peter Orseolo but seized power for himself in 1041. His reign was marked by conflict with the Holy Roman Empire under Henry III and internal opposition from Hungarian nobles who resented his harsh rule and attempts to strengthen royal power at their expense. In 1044, Samuel Aba was defeated in battle by Henry III, who supported Peter Orseolo\'s return. After his military defeat, Samuel Aba was captured and killed by German or Hungarian forces loyal to Peter. Following his death, approximately 50 Hungarian lords suspected of supporting Aba or conspiring against the new regime were arrested and executed in a wave of political repression. This purge was meant to eliminate any remaining opposition to Peter Orseolo\'s restoration, but the brutality only increased resentment and instability.</div>', 'Samuel Aba conspirators'],
+                [1156, 1, '<div class="radial2"><strong>King Sverker I of Sweden</strong> - King of Sweden from approximately 1130-1156 CE, founder of the House of Sverker which would alternate power with the rival House of Eric for over a century. Sverker I married the widow of his predecessor King Inge the Younger, allowing him to claim the throne. His reign saw the establishment of the first Swedish bishopric and efforts to strengthen Christianity in Sweden. However, his rule was contested and created lasting political divisions. On December 25, 1156 (Christmas Day), King Sverker I was assassinated at Alvastra in Östergötland. According to chronicles, he was murdered by a servant or retainer, though the exact circumstances and motives remain unclear. Some sources suggest the assassination was politically motivated, possibly connected to the rival Eric clan. His death sparked a long period of civil conflict between his descendants (the Sverkers) and the descendants of his rival Eric the Saint (the Erics), leading to over a century of dynastic warfare in Sweden.</div>', 'Sverker I'],
+                [1160, 2, '<div class="radial2"><strong>King Eric IX of Sweden (Saint Eric)</strong> - King of Sweden from approximately 1156-1160 CE who succeeded Sverker I after his assassination. Eric IX, later canonized as Saint Eric and patron saint of Sweden, attempted to consolidate royal power and spread Christianity. He is credited with organizing the First Swedish Crusade to Finland to convert the Finns to Christianity. His brief reign was marked by both religious zeal and political opposition from supporters of the Sverker dynasty. On May 18, 1160 (Ascension Day), Eric IX was attending Mass at the Old Church of Uppsala when he was attacked by a Danish army led by Magnus Henriksen, a pretender to the throne supported by Sverker\'s sons. According to legend, Eric asked to finish hearing Mass before facing his attackers. He was killed outside the church after attempting to negotiate. His death and reported miracles at his tomb led to his veneration as a martyr and saint. The Eric-Sverker civil wars would continue for generations.</div>', 'Eric IX'],
+                [1167, 1, '<div class="radial2"><strong>King Charles VII of Sweden</strong> - King of Sweden from 1161-1167 CE, also known as Karl Sverkersson, son of the assassinated King Sverker I. Charles VII represented the Sverker dynasty in the ongoing civil war against the House of Eric. After his father\'s murder and Eric IX\'s brief reign, Charles managed to seize the throne in 1161. His reign was marked by constant conflict with supporters of the Eric dynasty, particularly Knut Eriksson (son of Eric IX). The rivalry between these two houses kept Sweden in a state of intermittent civil war. On April 12, 1167, Charles VII was ambushed and killed at Visingsö by supporters of Knut Eriksson. The assassination allowed Knut Eriksson to claim the throne as Canute I. Charles VII\'s death continued the bloody cycle of revenge killings between the two dynasties, with each assassination triggering retaliation and counter-claims to the throne. The civil wars would persist until the extinction of the Sverker line in 1222.</div>', 'Charles VII'],
+                [1577, 1, '<div class="radial2"><strong>King Eric XIV of Sweden</strong> - King of Sweden from 1560-1568 CE, son of Gustav Vasa who founded modern Sweden. Eric XIV was intelligent and cultured but increasingly paranoid and mentally unstable. His reign saw military conflicts with Denmark, Poland, and Lübeck in the Northern Seven Years\' War. In 1567, Eric\'s paranoia peaked with the "Sture Murders," where he personally participated in killing several imprisoned nobles he suspected of treason. His erratic behavior and the murders turned the nobility against him. In 1568, his half-brothers Duke John and Duke Charles led a rebellion that deposed him. Eric was imprisoned in various castles for nine years. On February 26, 1577, while imprisoned at Örbyhus Castle, the 43-year-old former king died suddenly. The official cause was given as illness, but most historians believe he was poisoned on orders of his half-brother King John III, possibly with arsenic in his pea soup. John likely feared Eric could become a rallying point for opposition. Recent analysis of Eric\'s remains has found high levels of arsenic, supporting the poisoning theory.</div>', 'Eric XIV'],
+                [1605, 1, '<div class="radial2"><strong>Tsar Feodor II of Russia</strong> - Tsar of Russia for only 45 days in 1605, the teenage son of Boris Godunov. Feodor II (also spelled Theodore) became tsar at age 16 when his father Boris died suddenly on April 13, 1605, amid a civil war against the False Dmitry I, who claimed to be the supposedly murdered son of Ivan the Terrible. Young Feodor was intelligent and well-educated but had no time to establish his rule. The False Dmitry\'s forces, supported by Polish troops and Russian boyars who opposed the Godunov family, advanced on Moscow. On June 10, 1605, after only 45 days of reign, conspirators led by boyars who had switched allegiance to the False Dmitry arrested Feodor II, his mother, and his sister. The official announcement claimed Feodor had poisoned himself along with his mother, but this was clearly fabricated propaganda. In reality, the entire family was murdered - strangled or otherwise killed - to eliminate any Godunov claim to the throne. False Dmitry I entered Moscow days later and became tsar, beginning the chaotic Time of Troubles.</div>', 'Theodore II'],
+                [1856, 1, '<div class="radial2"><strong>James Strang</strong> - Self-proclaimed king and leader of his own Mormon sect (Strangites) on Beaver Island, Michigan. Strang was the leader of his own sect of Mormonism, proclaiming himself its king. Three men who opposed Strang, each for their own reasons, formed a plot to kill him. They were led by McCulloch, a former friend of Strang\'s. They allied with Captain Charles H. McBlair of USS Michigan, who docked at Beaver Island and summoned Strang to board the ship. When Strang prepared to board, Bedford and Wentworth emerged from behind stacks of cordwood and shot Strang twice in the back of the head. After he fell to the ground, they shot him once in the back and struck him in the face with their guns. They fled to Mackinac County aboard USS Michigan with McCulloch and their respective families. Here their actions were celebrated. They were taken to jail, but the doors were left unlocked so they could leave and no further investigation occurred. Strang died from his wounds weeks later, and the Mormon community of Beaver Island was forcibly displaced.</div>', 'James Strang'],
+                [1865, 5, '<div class="radial2"><strong>President Abraham Lincoln</strong> - 16th President of the United States who led the nation through the Civil War and abolished slavery. On April 14, 1865, just days after the Confederate surrender, Lincoln attended a performance of "Our American Cousin" at Ford\'s Theatre in Washington, D.C. At approximately 10:15 pm, actor and Confederate sympathizer John Wilkes Booth entered the presidential box and shot Lincoln in the back of the head with a .44 caliber Derringer pistol. Booth jumped to the stage (breaking his leg), shouted "Sic semper tyrannis!" ("Thus always to tyrants"), and escaped. Lincoln was carried across the street to the Petersen House, where he died the following morning at 7:22 am on April 15, 1865. He was the first U.S. president to be assassinated. Booth was tracked down and killed 12 days later. Eight conspirators were tried; four were hanged, including Mary Surratt, the first woman executed by the U.S. government.</div>', 'Abraham Lincoln'],
+                [1867, 3, '<div class="radial2"><strong>Almon Case</strong> - Kansas state senator and Union supporter during the deeply divided post-Civil War period in Kansas. Case was a Republican politician in a region where Confederate sympathizers remained active and violent. His strong pro-Union stance and advocacy for Reconstruction policies made him a target. His family had already suffered violence - his son had been shot and killed the previous year in 1866 in an attempted assassination related to political tensions. On October 2, 1867, Case was shot and killed outside his own home in Salina, Kansas by George Farris, a Confederate sympathizer. The assassination was part of a broader pattern of political violence in Kansas during Reconstruction, where Southern sympathizers and Union supporters engaged in deadly conflicts. Farris was arrested but the outcome of his trial reflected the chaotic justice system of the era. Case\'s death exemplified the dangerous reality for politicians who took strong positions on civil rights and Reconstruction in the violent aftermath of the Civil War.</div>', 'Almon Case'],
+                [1868, 13, '<div class="radial2"><strong>Benjamin F. Randolph</strong> - African American politician, state senator, and chairman of the Republican Party in South Carolina during Reconstruction. Born free in Kentucky, Randolph was educated in Ohio and served as an Army chaplain during the Civil War. After the war, he moved to South Carolina where he became a powerful advocate for Black civil rights, education, and voting rights. As a state senator and head of the state Republican Party, he helped write South Carolina\'s progressive 1868 constitution and organized Black voters. His activism made him a prime target for white supremacists. On October 16, 1868, Randolph arrived at Hodges Station (near Abbeville, South Carolina) by train to speak at a political rally. As he stepped off the train in broad daylight before a crowd of witnesses, three white men approached and shot him multiple times, killing him instantly. The assassins, widely believed to be Ku Klux Klan members, were never prosecuted despite being recognized. Randolph\'s murder was part of a campaign of terror meant to suppress Black political participation. His assassination sent shockwaves through the Black community and demonstrated the violent resistance to Reconstruction.</div>', 'Benjamin F. Randolph'],
+                [1869, 5, '<div class="radial2"><strong>Joseph Adkins</strong> - Georgia state legislator and Radical Republican who championed civil rights for African Americans during Reconstruction. Adkins became a prominent enemy of the Ku Klux Klan after they murdered his fellow Republican George Ashburn in 1868. As a white politician supporting Black rights, he faced constant threats and hostility. In March 1869, Adkins led a delegation to Washington, D.C. to meet with federal officials, reporting Klan atrocities and requesting military intervention to stop the violence in Georgia. On March 31, 1869, Adkins arrived at Dearing railroad depot returning from his Washington trip. He was immediately intercepted by a mob of Klansmen who had been waiting for him. They stole his horse and buggy, dragged him away, and shot him multiple times, leaving him for dead on the roadside. His wife and daughter discovered him still barely alive and attempted to transport him home in a wagon, but Adkins died from his wounds during the journey. Adkins had previously reported local Klansman Ellis Adams and others for crimes, making him a marked man. His assassination demonstrated the Klan\'s impunity and determination to silence white allies of Reconstruction.</div>', 'Joseph Adkins'],
+                [1870, 8, '<div class="radial2"><strong>John W. Stephens</strong> - North Carolina state senator and prominent Republican organizer who worked to register Black voters and implement Reconstruction policies in Caswell County. Known as "Chicken Stephens," he was a white Southern Unionist who had opposed secession. His success in organizing the Republican Party and empowering Black voters made him the Klan\'s most wanted target in the region. On May 21, 1870, Stephens attended a Conservative (Democratic) Party meeting at the Caswell County Courthouse in Yanceyville, where he was received with open hostility. Accused of being a Republican spy, he was nonetheless allowed to stay. Former sheriff Frank Wiley, a Klan member, invited Stephens to speak privately in the courthouse basement. Once downstairs, Stephens was ambushed by a group of Klansmen who stabbed him repeatedly with knives and strangled him with a rope. His body was hidden in a lumber room. When Stephens didn\'t return home, a search party was organized. His brother found his mutilated body the next morning. The brutal assassination shocked the state. Governor William Woods Holden declared martial law and launched the Kirk-Holden War against the Klan, though this ultimately led to Holden\'s impeachment. In 1919, nearly 50 years later, John Lea, who had been the Caswell County Klan leader, confessed on his deathbed to orchestrating the murder, finally confirming what everyone knew.</div>', 'John W. Stephens'],
+                [1876, 2, '<div class="radial2"><strong>Alfred Rush</strong> - South Carolina state representative and African American Republican politician during the violent end of Reconstruction. Rush represented Florence County in the state legislature and was active in organizing Black voters and supporting civil rights. The 1876 election year was particularly violent in South Carolina, with white supremacist "Red Shirts" paramilitary groups terrorizing Black voters and Republican politicians as part of the "Straightout" campaign to overthrow Republican rule. On October 16, 1876, Rush and his wife Aggy were returning home from a Republican campaign picnic at a church near Timmonsville, South Carolina. As their buggy approached a creek crossing and they stopped to let their horses drink, a gunshot rang out from ambush. Rush was struck directly in the heart and died instantly, collapsing in the buggy beside his terrified wife. A white neighbor, William D. Purvis, was arrested and tried for the assassination, but an all-white jury acquitted him despite evidence. Rush\'s murder was one of many political assassinations during the violent 1876 campaign that successfully ended Reconstruction in South Carolina through terror and intimidation.</div>', 'Alfred Rush'],
+                [1879, 1, '<div class="radial2"><strong>John Milton Elliott</strong> - Associate Justice of the Kentucky Court of Appeals, the state\'s highest court. Elliott had a distinguished legal career but made a powerful enemy in the Buford family through court decisions. On March 26, 1879, Elliott was standing in front of the Capitol Hotel in Frankfort, Kentucky with fellow judge Thomas M. Hines when they were approached by Thomas Buford, a prominent local citizen. Buford invited both judges to go hunting and then for drinks, but they politely declined. Without warning, Buford pulled out a double-barreled shotgun and shot Elliott at close range. The judge was killed instantly, dying in front of numerous witnesses on the street. Buford calmly stood over the body as Deputy Sheriff approached, turned himself in, and stated matter-of-factly that he had killed Elliott in retaliation for court rulings against his family, particularly one involving his father. The brazen daylight murder of a sitting appellate judge shocked the state. Buford was judged insane and sent to an asylum in Anchorage, Kentucky, but he later escaped and fled to Indiana, where he lived out his life. The assassination highlighted the personal dangers judges faced when ruling against powerful families in the post-Civil War South.</div>', 'John Milton Elliott'],
+                [1882, 5, '<div class="radial2"><strong>W. H. H. Tison</strong> - Florida state representative from Marion County who served in the state legislature. Tison became embroiled in a bitter personal and political feud with a local merchant named Sanders. The conflict escalated when Tison and his brothers physically assaulted Sanders one week before the assassination, beating him severely over grievances related to business dealings or political differences. On January 24, 1882, Representative Tison was walking along the street in front of Sanders\' store in Ocala, Florida. Sanders, still nursing his wounds and rage from the beating, stood in the doorway of his store and without warning raised a shotgun and fired at Tison. The blast struck Tison directly and he died instantly on the street. Sanders was immediately arrested by local authorities and charged with murder. The assassination exemplified the culture of personal honor and violent retaliation that characterized politics in the post-Reconstruction South, where political disputes often turned deadly and politicians settled scores with guns rather than through the legal system. The outcome of Sanders\' prosecution reflected the era\'s acceptance of "honor killings" in response to physical assaults.</div>', 'W. H. H. Tison'],
+                [1891, 1, '<div class="radial2"><strong>Samuel Newitt Wood</strong> - Prominent Kansas politician, abolitionist, and Civil War veteran who played a key role in Kansas\'s early statehood. Wood was an influential Republican who helped organize the Free State movement and fought border ruffians in "Bleeding Kansas." After the war, he held various positions including state senator. By the 1880s, Wood had made powerful enemies through land disputes and political battles in southwest Kansas. His former friend Judge Theodosius Botkin turned against him and appointed Wood\'s enemy William O\'Connor as Stevens County attorney, who then filed multiple charges to harass Wood. On June 23, 1891, despite warnings from allies that going to Hugoton (Stevens County seat) was dangerous, Wood appeared at the courthouse for a hearing. He entered the courtroom to check the court docket, and as he emerged, Jim Brennan shot him from behind with a pistol. Wood ran for his life but Brennan pursued him, shooting him again in the back and then in the head. Wood collapsed and died 15-20 minutes later. Sheriff Cann tried to arrest Brennan but backed down after a standoff. Democrats and Populists accused Judge Botkin and O\'Connor of orchestrating the political assassination. Brennan was released when authorities claimed an impartial jury couldn\'t be formed. He fled to Oklahoma, and when Kansas later tried to extradite him for trial, Oklahoma courts refused. Wood\'s assassination was never punished, exemplifying the lawless violence of frontier politics.</div>', 'Samuel Newitt Wood'],
+                [1901, 1, '<div class="radial2"><strong>President William McKinley</strong> - 25th President of the United States. On September 6, 1901, McKinley was shot twice by anarchist Leon Czolgosz while greeting the public at the Temple of Music at the Pan-American Exposition in Buffalo, New York. One bullet deflected off a button, but the other penetrated his abdomen. Despite initial optimism, gangrene set in around his wounds. McKinley died on September 14, 1901 at 2:15 am, becoming the third U.S. president to be assassinated. His death led to Theodore Roosevelt\'s presidency and prompted Congress to officially charge the Secret Service with presidential protection.</div>', 'McKinley'],
+                [1914, 7, '<div class="radial2"><strong>Archduke Franz Ferdinand and Sophie</strong> - Heir presumptive to the Austro-Hungarian throne and his wife. On June 28, 1914, the couple were assassinated in Sarajevo by Gavrilo Princip, a 19-year-old Bosnian Serb member of the Black Hand secret society. After an initial failed bombing attempt by another conspirator, Princip shot Franz Ferdinand in the neck and Sophie in the abdomen. Both died within the hour. This assassination triggered a chain of events leading to World War I, as Austria-Hungary issued an ultimatum to Serbia, leading to declarations of war across Europe.</div>', 'Franz Ferdinand'],
+                [1940, 11, '<div class="radial2"><strong>Leon Trotsky</strong> - Marxist revolutionary and Soviet politician, founder of the Red Army and Lenin\'s ally. Exiled by Stalin in 1929, Trotsky lived in Mexico City where he continued writing and organizing opposition. On August 20, 1940, NKVD agent Ramón Mercader, posing as "Frank Jacson," gained access to Trotsky\'s study and attacked him with an ice axe, striking him in the head. Trotsky fought back and called for help, surviving long enough to tell guards, "I will not survive this attack." He died the following day, August 21, 1940. His assassination was ordered by Stalin. An estimated 300,000 people attended his funeral in Mexico City.</div>', 'Leon Trotsky'],
+                [1948, 13, '<div class="radial2"><strong>Mahatma Gandhi</strong> - Leader of the Indian independence movement and pioneer of nonviolent civil disobedience (satyagraha). On January 30, 1948, Gandhi was assassinated at Birla House in New Delhi by Nathuram Godse, a Hindu nationalist who opposed Gandhi\'s support for India\'s Muslims during the partition. At 5:17 pm, as Gandhi walked to a prayer meeting, Godse fired three shots at point-blank range, striking Gandhi in the chest. His last words were reportedly "Hē Ram" ("Oh God"). Gandhi\'s death led to massive mourning across India, with over a million people attending his funeral procession. His philosophy of nonviolent resistance inspired civil rights movements worldwide, including Martin Luther King Jr.\'s campaign.</div>', 'Gandhi'],
+                [1963, 15, '<div class="radial2"><strong>President John F. Kennedy</strong> - 35th President of the United States. On November 22, 1963, Kennedy was assassinated while riding in a presidential motorcade through Dealey Plaza in Dallas, Texas. At 12:30 pm, shots rang out and Kennedy was struck twice - once in the upper back and once in the head. He was pronounced dead at Parkland Memorial Hospital at 1:00 pm. Lee Harvey Oswald was arrested for the murder but was himself shot and killed two days later by nightclub owner Jack Ruby. The Warren Commission concluded Oswald acted alone, but the assassination has spawned numerous conspiracy theories. Kennedy\'s death shocked the nation and world, with his state funeral attended by representatives from over 90 countries.</div>', 'JFK'],
+                [1965, 23, '<div class="radial2"><strong>Malcolm X</strong> - Influential African-American Muslim minister, human rights activist, and prominent figure in the civil rights movement. Born Malcolm Little, he became a controversial spokesman for the Nation of Islam before breaking away and embracing mainstream Islam. On February 21, 1965, while preparing to address the Organization of Afro-American Unity at the Audubon Ballroom in Manhattan, Malcolm X was shot multiple times by three gunmen. He sustained 21 gunshot wounds and was pronounced dead at Columbia Presbyterian Hospital. Talmadge Hayer (Thomas Hagan) was arrested at the scene; two other men, Norman 3X Butler and Thomas 15X Johnson, were later convicted, though they maintained their innocence. Between 14,000 and 30,000 mourners attended his funeral. His assassination remains controversial, with ongoing questions about the full extent of the conspiracy.</div>', 'Malcolm X'],
+                [1968, 9, '<div class="radial2"><strong>Dr. Martin Luther King Jr.</strong> - Baptist minister and leader of the American civil rights movement, Nobel Peace Prize laureate known for his philosophy of nonviolent resistance. On April 4, 1968, King was assassinated at the Lorraine Motel in Memphis, Tennessee, where he was supporting striking sanitation workers. At 6:01 pm, while standing on the motel\'s second-floor balcony, King was shot in the face by James Earl Ray firing from a nearby boarding house. He was rushed to St. Joseph\'s Hospital and pronounced dead at 7:05 pm. The day before, King had delivered his prophetic "I\'ve Been to the Mountaintop" speech. His assassination sparked riots in over 100 American cities and led to a national day of mourning. Over 300,000 people attended his funeral in Atlanta. Ray pleaded guilty but later recanted, and conspiracy theories about King\'s death persist.</div>', 'MLK Jr.'],
+                [1968, 9, '<div class="radial2"><strong>Senator Robert F. Kennedy</strong> - U.S. Senator from New York, former Attorney General, and 1968 Democratic presidential candidate. Brother of President John F. Kennedy. On June 5, 1968, shortly after midnight, Kennedy was shot at the Ambassador Hotel in Los Angeles moments after delivering his victory speech for winning the California Democratic primary. As he walked through the hotel\'s kitchen pantry, Sirhan Sirhan, a 24-year-old Palestinian, fired a .22 caliber revolver at close range. Kennedy was struck three times, with one bullet lodging in his brain. He was rushed to Good Samaritan Hospital where he underwent surgery but died 26 hours later on June 6, 1968 at 1:44 am. His assassination came just 63 days after Martin Luther King Jr.\'s murder, deepening the nation\'s trauma. Kennedy\'s funeral train from New York to Washington drew millions of mourners along the tracks. He was buried at Arlington National Cemetery near his brother John.</div>', 'RFK'],
+                
+                // Regular entries (without detailed tooltips)
+                [-1200, 1],
+                [-1155, 1],
+                [-748, 1],
+                [-682, 1],
+                [-681, 1],
+                [-582, 1],
+                [-579, 1],
+                [-554, 1],
+                [-534, 1],
+                [-514, 1],
+                [-465, 1],
+                [-461, 1],
+                [-439, 1],
+                [-423, 2],
+                [-404, 1],
+                [-354, 1],
+                [-352, 1],
+                [-336, 1],
+                [-314, 1],
+                [-281, 1],
+                [-252, 1],
+                [-246, 1],
+                [-238, 1],
+                [-223, 1],
+                [-192, 1],
+                [-185, 1],
+                [-176, 1],
+                [-146, 1],
+                [-139, 1],
+                [-138, 1],
+                [-135, 1],
+                [-133, 1],
+                [-117, 1],
+                [-91, 1],
+                [-48, 1],
+                [-44, 1],
+                [-43, 1],
+                [192, 2],
+                [200, 1],
+                [212, 1],
+                [217, 1],
+                [221, 1],
+                [235, 1],
+                [244, 1],
+                [253, 2],
+                [268, 3],
+                [276, 1],
+                [282, 1],
+                [285, 2],
+                [456, 1],
+                [480, 1],
+                [555, 1],
+                [592, 1],
+                [618, 1],
+                [644, 1],
+                [645, 1],
+                [651, 1],
+                [661, 1],
+                [680, 1],
+                [686, 1],
+                [754, 1],
+                [815, 1],
+                [818, 1],
+                [861, 1],
+                [870, 1],
+                [904, 1],
+                [921, 1],
+                [935, 1],
+                [946, 1],
+                [978, 1],
+                [995, 1],
+                [997, 1],
+                [1052, 1],
+                [1070, 1],
+                [1079, 1],
+                [1086, 1],
+                [1092, 1],
+                [1099, 1],
+                [1100, 1],
+                [1121, 1],
+                [1127, 1],
+                [1130, 1],
+                [1134, 1],
+                [1135, 1],
+                [1136, 1],
+                [1138, 1],
+                [1146, 1],
+                [1152, 1],
+                [1168, 1],
+                [1170, 1],
+                [1174, 1],
+                [1186, 1],
+                [1189, 1],
+                [1192, 1],
+                [1196, 1],
+                [1207, 1],
+                [1208, 1],
+                [1209, 1],
+                [1213, 2],
+                [1219, 1],
+                [1225, 1],
+                [1227, 1],
+                [1233, 1],
+                [1241, 1],
+                [1260, 1],
+                [1263, 1],
+                [1264, 1],
+                [1267, 1],
+                [1270, 1],
+                [1272, 1],
+                [1282, 1],
+                [1286, 1],
+                [1290, 1],
+                [1296, 3],
+                [1306, 2],
+                [1308, 1],
+                [1311, 1],
+                [1323, 1],
+                [1345, 1],
+                [1346, 1],
+                [1354, 1],
+                [1355, 1],
+                [1358, 1],
+                [1359, 1],
+                [1369, 1],
+                [1381, 3],
+                [1383, 1],
+                [1386, 2],
+                [1389, 1],
+                [1397, 1],
+                [1407, 1],
+                [1412, 1],
+                [1415, 1],
+                [1419, 1],
+                [1425, 1],
+                [1436, 1],
+                [1437, 1],
+                [1440, 1],
+                [1441, 1],
+                [1452, 1],
+                [1456, 1],
+                [1471, 1],
+                [1478, 1],
+                [1485, 1],
+                [1486, 1],
+                [1488, 1],
+                [1497, 1],
+                [1507, 1],
+                [1520, 1],
+                [1521, 1],
+                [1528, 2],
+                [1534, 1],
+                [1535, 1],
+                [1537, 1],
+                [1541, 1],
+                [1548, 1],
+                [1550, 1],
+                [1551, 2],
+                [1557, 1],
+                [1565, 1],
+                [1566, 2],
+                [1567, 1],
+                [1570, 1],
+                [1572, 1],
+                [1578, 1],
+                [1579, 1],
+                [1582, 1],
+                [1584, 1],
+                [1589, 2],
+                [1593, 1],
+                [1596, 1],
+                [1601, 1],
+                [1602, 1],
+                [1608, 1],
+                [1610, 1],
+                [1613, 1],
+                [1617, 2],
+                [1621, 2],
+                [1622, 1],
+                [1625, 2],
+                [1628, 2],
+                [1634, 1],
+                [1639, 1],
+                [1640, 2],
+                [1649, 1],
+                [1650, 1],
+                [1651, 1],
+                [1661, 2],
+                [1663, 1],
+                [1669, 1],
+                [1672, 2],
+                [1678, 1],
+                [1679, 1],
+                [1682, 2],
+                [1695, 1],
+                [1699, 1],
+                [1703, 1],
+                [1710, 1],
+                [1716, 1],
+                [1719, 1],
+                [1744, 2],
+                [1747, 1],
+                [1762, 2],
+                [1763, 1],
+                [1782, 1],
+                [1789, 1],
+                [1792, 1],
+                [1793, 1],
+                [1800, 1],
+                [1801, 1],
+                [1804, 1],
+                [1806, 2],
+                [1810, 1],
+                [1812, 2],
+                [1815, 3],
+                [1816, 1],
+                [1817, 1],
+                [1818, 2],
+                [1819, 1],
+                [1820, 1],
+                [1823, 1],
+                [1825, 2],
+                [1826, 1],
+                [1828, 1],
+                [1829, 2],
+                [1830, 3],
+                [1831, 2],
+                [1834, 1],
+                [1835, 2],
+                [1836, 1],
+                [1837, 2],
+                [1838, 2],
+                [1839, 3],
+                [1841, 2],
+                [1842, 1],
+                [1844, 2],
+                [1845, 1],
+                [1846, 2],
+                [1847, 1],
+                [1848, 1],
+                [1849, 2],
+                [1860, 3],
+                [1861, 5],
+                [1862, 2],
+                [1863, 4],
+                [1864, 1],
+                [1866, 1],
+                [1871, 1],
+                [1872, 5],
+                [1873, 3],
+                [1875, 5],
+                [1877, 3],
+                [1878, 5],
+                [1880, 1],
+                [1881, 3, '<div class="radial2"><strong>President James A. Garfield</strong> - 20th President of the United States. On July 2, 1881, just four months into his presidency, Garfield was shot at the Baltimore and Potomac Railroad Station in Washington, D.C. by Charles J. Guiteau, a disgruntled office seeker who believed he deserved a political appointment. Guiteau shot Garfield twice in the back as the president waited for a train. One bullet grazed his arm, but the other lodged near his spine. Garfield survived the initial shooting but lingered for 79 days in excruciating pain. His condition was worsened by his doctors\' repeated probing of the wound with unsterilized instruments, causing infections. He died on September 19, 1881 at a seaside cottage in Elberon, New Jersey, where he had been moved to escape Washington\'s summer heat. The cause of death was blood poisoning and infection, largely due to unsanitary medical practices. Guiteau was convicted and hanged on June 30, 1882.</div>', 'James Garfield'],
+                [1885, 2],
+                [1886, 1],
+                [1887, 1],
+                [1889, 4],
+                [1890, 2],
+                [1892, 1],
+                [1893, 2],
+                [1894, 4],
+                [1895, 2],
+                [1896, 1],
+                [1897, 4],
+                [1898, 3],
+                [1899, 2],
+                [1900, 4],
+                [1901, 1],
+                [1902, 3],
+                [1903, 5],
+                [1904, 3],
+                [1905, 14],
+                [1906, 2],
+                [1907, 3],
+                [1908, 4],
+                [1909, 3],
+                [1910, 2],
+                [1911, 3],
+                [1912, 3],
+                [1913, 11],
+                [1915, 8],
+                [1916, 5],
+                [1917, 4],
+                [1918, 12],
+                [1919, 9],
+                [1920, 8],
+                [1921, 20],
+                [1922, 11],
+                [1923, 7],
+                [1924, 13],
+                [1925, 6],
+                [1926, 2],
+                [1927, 4],
+                [1928, 9],
+                [1929, 5],
+                [1930, 5],
+                [1931, 4],
+                [1932, 11],
+                [1933, 12],
+                [1934, 10],
+                [1935, 7],
+                [1936, 12],
+                [1937, 6],
+                [1938, 10],
+                [1939, 5],
+                [1941, 6],
+                [1942, 11],
+                [1943, 12],
+                [1944, 18],
+                [1945, 14],
+                [1946, 8],
+                [1947, 16],
+                [1949, 11],
+                [1950, 7],
+                [1951, 12],
+                [1952, 5],
+                [1953, 2],
+                [1954, 5],
+                [1955, 2],
+                [1956, 1],
+                [1957, 10],
+                [1958, 11],
+                [1959, 4],
+                [1960, 6],
+                [1961, 12],
+                [1962, 6],
+                [1963, 15],
+                [1964, 3],
+                [1966, 13],
+                [1967, 9],
+                [1969, 13],
+                [1970, 32],
+                [1971, 27],
+                [1972, 26],
+                [1973, 40],
+                [1974, 29],
+                [1975, 105],
+                [1976, 84],
+                [1977, 100],
+                [1978, 149],
+                [1979, 194],
+                [1980, 210],
+                [1981, 138],
+                [1982, 155],
+                [1983, 152],
+                [1984, 179],
+                [1985, 191],
+                [1986, 165],
+                [1987, 171],
+                [1988, 230],
+                [1989, 288],
+                [1990, 240],
+                [1991, 248],
+                [1992, 315],
+                [1993, 55],
+                [1994, 302],
+                [1995, 234],
+                [1996, 237],
+                [1997, 161],
+                [1998, 74],
+                [1999, 96],
+                [2000, 142],
+                [2001, 147],
+                [2002, 112],
+                [2003, 98],
+                [2004, 126],
+                [2005, 166],
+                [2006, 166],
+                [2007, 150],
+                [2008, 152],
+                [2009, 166],
+                [2010, 145],
+                [2011, 158],
+                [2012, 200],
+                [2013, 171],
+                [2014, 185],
+                [2015, 215],
+                [2016, 198],
+                [2017, 170],
+                [2018, 44],
+                [2019, 57],
+                [2020, 49],
+                [2021, 41],
+                [2022, 77],
+                [2023, 40],
+                [2024, 75],
+                [2025, 38]
+            ];
+
+            var processedData = [];
+            for (var i = 0; i < rawData.length; i++) {
+                var year = rawData[i][0];
+                var value = rawData[i][1];
+                var detailsHTML = rawData[i][2];
+                var annotation = rawData[i][3];
+                var yearLabel = year < 0 ? Math.abs(year) + ' BCE' : year + ' CE';
+
+                var tooltipHTML = '<div class="tooltip-container">' +
+                    '<div class="tooltip-header">' +
+                    '<b>' + yearLabel + '</b><br>' +
+                    'Assassinations: ' + value +
+                    '</div>';
+
+                if (detailsHTML) {
+                    tooltipHTML += '<hr class="tooltip-divider">' +
+                        '<div class="tooltip-details">' +
+                        detailsHTML +
+                        '</div>';
+                }
+
+                tooltipHTML += '</div>';
+
+                processedData.push([year, value, tooltipHTML, annotation]);
+            }
+
+            dataTable.addRows(processedData);
+            chart = new google.visualization.ColumnChart(document.getElementById('chart_div'));
+
+            google.visualization.events.addListener(chart, 'ready', function () {
+                setButtonsEnabled(true);
+            });
+
+            setButtonsEnabled(false);
+            drawChartWithView();
+        }
+
+        function adjustVAxisToData() {
+            if (!dataTable) return;
+            var rows = dataTable.getNumberOfRows();
+            var xMin = options.hAxis.viewWindow.min;
+            var xMax = options.hAxis.viewWindow.max;
+            var maxVal = -Infinity;
+
+            for (var r = 0; r < rows; r++) {
+                var x = dataTable.getValue(r, 0);
+                if (typeof x === 'number' && x >= xMin && x <= xMax) {
+                    var v = dataTable.getValue(r, 1);
+                    if (typeof v === 'number' && !isNaN(v) && v > maxVal) {
+                        maxVal = v;
+                    }
+                }
+            }
+
+            if (!isFinite(maxVal) || maxVal <= 0) {
+                maxVal = 10;
+            }
+
+            var roundedMax = maxVal > 100 ? Math.ceil(maxVal / 50) * 50 : Math.ceil(maxVal / 10) * 10;
+            roundedMax = Math.max(10, Math.min(roundedMax, 350));
+
+            options.vAxis.viewWindow = { min: 0, max: roundedMax };
+        }
+
+        function generateFormattedTicks() {
+            var xMin = options.hAxis.viewWindow.min;
+            var xMax = options.hAxis.viewWindow.max;
+            var range = xMax - xMin;
+            var ticks = [];
+
+            var interval = 50;
+
+            if (range > 2000) {
+                interval = 100;
+            }
+
+            var start = Math.floor(xMin / interval) * interval;
+            for (var year = start; year <= xMax; year += interval) {
+                var label;
+                if (year < 0) {
+                    label = Math.abs(year) + ' BCE';
+                } else if (year === 0) {
+                    label = '0';
+                } else {
+                    label = year + ' CE';
+                }
+                ticks.push({ v: year, f: label });
+            }
+
+            return ticks;
+        }
+
+        function redraw() {
+            if (chart && dataTable) {
+                setButtonsEnabled(false);
+                drawChartWithView();
+            } else {
+                drawChart();
+            }
+        }
+
+        var resizeTimeout;
+        window.addEventListener('resize', function () {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(function () {
+                redraw();
+            }, 250);
+        });
+
+        function setRangeIndex(idx) {
+            currentIndex = idx;
+            var r = ranges[idx];
+            options.hAxis.viewWindow.min = r.min;
+            options.hAxis.viewWindow.max = r.max;
+            navButtons.forEach(function (b, i) {
+                b.classList.toggle('active', i === idx);
+            });
+
+            var titles = document.querySelectorAll('.range-title');
+            titles.forEach(function (title) {
+                var rangeNum = parseInt(title.getAttribute('data-range'));
+                title.classList.toggle('active', rangeNum === idx);
+            });
+        }
+
+    </script>
+
+    <style>
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        #selection-header {
+            position: fixed;
+            top: 1em;
+            left: 20%;
+            right: 20%;
+            z-index: 1000;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            text-align: center;
+        }
+
+        .range-title {
+            display: none;
+            margin: 0;
+            color: white;
+            font-family: "Cinzel", serif;
+            font-size: 24px;
+            font-weight: 600;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .range-title.active {
+            display: block;
+        }
+
+        #chart_div {
+            position: relative;
+            width: 100%;
+            height: 85%;
+            margin-top: 0;
+            padding: 0;
+            overflow: hidden;
+            box-sizing: border-box;
+
+
+            img {
+                max-width: 300px;
+                max-height: 300px;
+            }
+
+            p {
+                font-family: "Cinzel", serif;
+                margin-top: 1px;
+                margin-bottom: 1px;
+            }
+        }
+
+        #nav {
+            position: fixed;
+            left: 10%;
+            right: 10%;
+            bottom: 2em;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            padding: 8px;
+            border-radius: 28px;
+            background: #e65c5c;
+        }
+
+        .optBtn {
+            flex: 1;
+            min-width: 0;
+            height: 44px;
+            padding: 0;
+            border: none;
+            background: transparent;
+            position: relative;
+            cursor: pointer;
+        }
+
+        .optBtn::before {
+            content: "";
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #ccc;
+            border: 2px solid #888;
+            pointer-events: none;
+            transition: background .15s, border-color .15s, box-shadow .15s;
+        }
+
+        .optBtn:hover::before {
+            border-color: #2b7cff;
+        }
+
+        .optBtn.active::before {
+            background: #2b7cff;
+            border-color: #2b7cff;
+            box-shadow: 0 0 6px rgba(43, 124, 255, .35);
+        }
+
+        #prevBtn,
+        #nextBtn {
+            flex: 0 0 40px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: none;
+            background: #494949;
+            color: #ccc;
+            cursor: pointer;
+        }
+
+        div.google-visualization-tooltip {
+            height: auto !important;
+            position: absolute !important;
+            left: 3em !important;
+            top: 20% !important;
+            max-width: 50% !important;
+
+            img {
+                max-width: 100%;
+                border-radius: 4px;
+                margin-bottom: 8px;
+                display: block;
+            }
+
+            .tooltip-container {
+                padding: 8px;
+                font-family: Arial, sans-serif;
+            }
+
+            .tooltip-header {}
+
+            .tooltip-divider {
+                border: none;
+                border-top: 1px solid #444;
+                margin: 10px 0;
+            }
+
+            .tooltip-details {
+                margin-top: 8px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!--Fixed header that changes based on selection-->
+    <div id="selection-header">
+        <div class="range-title" data-range="0">Modern Era: 1900-2025 CE</div>
+        <div class="range-title" data-range="1">Ancient Egypt: 2005-1945 BCE</div>
+        <div class="range-title" data-range="2">Classical Period: 200 BCE - 200 CE</div>
+        <div class="range-title" data-range="3">Medieval Period: 1000-1300 CE</div>
+        <div class="range-title" data-range="4">Renaissance: 1400-1600 CE</div>
+        <div class="range-title" data-range="5">Early Modern: 1500-1650 CE</div>
+        <div class="range-title" data-range="6">Industrial Age: 1800-1925 CE</div>
+        <div class="range-title" data-range="7">World Wars Era: 1850-1950 CE</div>
+        <div class="range-title" data-range="8">20th Century: 1850-2000 CE</div>
+        <div class="range-title" data-range="9">Contemporary: 1925-2025 CE</div>
+    </div>
+
+    <!--Div that will hold the chart-->
+    <div id="chart_div"></div>
+
+    <div id="nav">
+        <button id="prevBtn">⟨</button>
+        <button class="optBtn" title="Range 1" aria-label="Range 1"></button>
+        <button class="optBtn" title="Range 2" aria-label="Range 2"></button>
+        <button class="optBtn" title="Range 3" aria-label="Range 3"></button>
+        <button class="optBtn" title="Range 4" aria-label="Range 4"></button>
+        <button class="optBtn" title="Range 5" aria-label="Range 5"></button>
+        <button class="optBtn" title="Range 6" aria-label="Range 6"></button>
+        <button class="optBtn" title="Range 7" aria-label="Range 7"></button>
+        <button class="optBtn" title="Range 8" aria-label="Range 8"></button>
+        <button class="optBtn" title="Range 9" aria-label="Range 9"></button>
+        <button class="optBtn" title="Range 10" aria-label="Range 10"></button>
+        <button id="nextBtn">⟩</button>
+    </div>
+
+</body>
+
+</html>
